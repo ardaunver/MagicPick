@@ -24,11 +24,16 @@ struct Fireball {
 static const float FIREBALL_SPEED = 150.0f;
 static const float FIREBALL_LIFETIME = 5.0f; // safety net; it despawns off-screen well before this
 static const float FIREBALL_RADIUS = 7.0f;
+static const float FIREBALL_SPRITE_WIDTH = 20.0f; // drawn size in virtual pixels; source art is a 1.5:1 aspect icon
+static const float FIREBALL_SPRITE_HEIGHT = FIREBALL_SPRITE_WIDTH * (320.0f / 480.0f);
 
 static const int MELEE_DAMAGE = ENEMY_MAX_HEALTH / 4; // 4 base attacks to kill, at full tune
 static const int FIREBALL_DAMAGE = ENEMY_MAX_HEALTH;  // one-shot, at full tune
 static const int FIREBALL_BURN_DAMAGE = 20;           // extra damage-over-time, at full tune
 static const float FIREBALL_BURN_DURATION = 2.0f;
+
+static const int SLAM_DAMAGE = ENEMY_MAX_HEALTH / 3; // mid-air attack -> ground slam, at full tune
+static const float SLAM_RADIUS = 24.0f; // virtual pixels, AoE around the player on landing
 
 struct FrostBlast {
     Vector2 position;
@@ -40,18 +45,20 @@ static const int FROST_BLAST_DAMAGE = ENEMY_MAX_HEALTH / 2; // 50, at full tune
 static const float FROST_BLAST_KNOCKBACK_FORCE = 30.0f;
 static const float FROST_BLAST_ANIM_DURATION = 0.4f;
 
-// A beer mug that pops out of a slain slime, hops through a little arc, and
-// is auto-collected (heals + bloats the player) once it lands.
+// A beer mug that pops out of a slain slime, hops through a little arc,
+// lands and sits on the floor, and is collected (heals + bloats the player)
+// if the player walks into it before it despawns.
 struct BeerDrop {
     Vector2 position;
     Vector2 velocity;
     bool active;
-    float timer;
+    float groundTimer; // counts down once landed; only meaningful after landing
 };
 
-static const float BEER_POP_DURATION = 0.7f;
 static const float BEER_POP_SPEED = 45.0f;
 static const float BEER_POP_GRAVITY = 220.0f;
+static const float BEER_DROP_SIZE = 8.0f; // matches the DrawBeerIcon size passed below
+static const float BEER_GROUND_DURATION = 5.0f; // despawns this long after landing if uncollected
 static const float FLOATING_TEXT_DURATION = 1.2f;
 
 static const float TUNE_COOLDOWN_DURATION = 10.0f;
@@ -93,7 +100,10 @@ static const float AMBIENT_DARK_ALPHA = 0.7f;  // 70% dark overlay -> 30% ambien
 static const float LIGHT_RADIUS = 110.0f;
 static const float LIGHT_DURATION = 60.0f;
 static const float LIGHT_FADE_DURATION = 3.0f;
+static const float LIGHT_PULSE_PERIOD = 1.25f; // seconds per brightness pulse cycle
+static const float LIGHT_PULSE_MIN = 0.75f;   // dimmest point of the pulse, as a fraction of full brightness
 static const float FROST_BLAST_RADIUS = LIGHT_RADIUS / 3.0f;
+static const float FROST_LIGHT_MAX_ALPHA = 0.5f; // peak strength of the frost blast's area-indicator glow
 
 static const float SPELL_NAME_DISPLAY_TIME = 1.5f;
 
@@ -319,26 +329,6 @@ static Texture2D CreatePanelMask(int width, int height, int margin) {
     return LoadTextureFromImage(image);
 }
 
-// A glowing comet-like fireball: layered core (hot white -> gold -> orange
-// glow) plus a few flickering flame tendrils trailing behind its travel.
-static void DrawFireball(Vector2 pos, float radius, bool facingRight) {
-    float trailDir = facingRight ? -1.0f : 1.0f; // tendrils trail opposite the direction of travel
-
-    for (int i = 3; i >= 1; i--) {
-        float t = (float)i / 3.0f;
-        float wag = (i % 2 == 0) ? 1.0f : -1.0f;
-        Vector2 trailPos = {
-            pos.x + trailDir * radius * 1.4f * t,
-            pos.y - radius * 0.4f * t * wag
-        };
-        DrawCircleV(trailPos, radius * (0.5f - 0.1f * i), Fade(ORANGE, 0.5f));
-    }
-
-    DrawCircleV(pos, radius * 1.5f, Fade(ORANGE, 0.25f)); // outer glow
-    DrawCircleV(pos, radius, ORANGE);
-    DrawCircleV(pos, radius * 0.55f, GOLD);
-    DrawCircleV(pos, radius * 0.3f, Color{255, 250, 200, 255}); // white-hot core
-}
 
 // An icy burst expanding outward from the center, fading as it grows. A
 // radial gradient (pale cyan core -> deep blue rim) sells the "frost" feel.
@@ -419,8 +409,91 @@ int main() {
     Rectangle caveSrc = {0, 0, (float)caveTexture.width, (float)caveTexture.height};
     Rectangle caveDst = {0, 0, (float)VIRTUAL_WIDTH, (float)VIRTUAL_HEIGHT};
 
-    const char *playerTexturePath = TextFormat("%sassets/player.png", GetApplicationDirectory());
+    const char *playerTexturePath = TextFormat("%sassets/player/idle.png", GetApplicationDirectory());
     Texture2D playerTexture = LoadTexture(playerTexturePath);
+
+    const char *playerAttackFrameFiles[PLAYER_ATTACK_FRAME_COUNT] = {
+        "player/base_attack/1_windup.png",
+        "player/base_attack/2_swing.png",
+        "player/base_attack/3_impact.png",
+        "player/base_attack/4_recovery.png",
+    };
+    Texture2D playerAttackFrames[PLAYER_ATTACK_FRAME_COUNT];
+    for (int i = 0; i < PLAYER_ATTACK_FRAME_COUNT; i++) {
+        const char *path = TextFormat("%sassets/%s", GetApplicationDirectory(), playerAttackFrameFiles[i]);
+        playerAttackFrames[i] = LoadTexture(path);
+    }
+
+    const char *playerBloatedTexturePath = TextFormat("%sassets/player/bloated.png", GetApplicationDirectory());
+    Texture2D playerBloatedTexture = LoadTexture(playerBloatedTexturePath);
+
+    const char *playerJumpFrameFiles[PLAYER_JUMP_FRAME_COUNT] = {
+        "player/jump/1_crouch.png",
+        "player/jump/2_rise.png",
+        "player/jump/3_apex.png",
+        "player/jump/4_fall.png",
+    };
+    Texture2D playerJumpFrames[PLAYER_JUMP_FRAME_COUNT];
+    for (int i = 0; i < PLAYER_JUMP_FRAME_COUNT; i++) {
+        const char *path = TextFormat("%sassets/%s", GetApplicationDirectory(), playerJumpFrameFiles[i]);
+        playerJumpFrames[i] = LoadTexture(path);
+    }
+
+    const char *playerSlamFrameFiles[PLAYER_SLAM_FRAME_COUNT] = {
+        "player/slam/1_windup.png",
+        "player/slam/2_swing.png",
+        "player/slam/3_impact.png",
+        "player/slam/4_recovery.png",
+    };
+    Texture2D playerSlamFrames[PLAYER_SLAM_FRAME_COUNT];
+    for (int i = 0; i < PLAYER_SLAM_FRAME_COUNT; i++) {
+        const char *path = TextFormat("%sassets/%s", GetApplicationDirectory(), playerSlamFrameFiles[i]);
+        playerSlamFrames[i] = LoadTexture(path);
+    }
+
+    const char *playerDoubleJumpFrameFiles[PLAYER_DOUBLE_JUMP_FRAME_COUNT] = {
+        "player/double_jump/1_tuck.png",
+        "player/double_jump/2_roll.png",
+        "player/double_jump/3_spin.png",
+        "player/double_jump/4_unroll.png",
+    };
+    Texture2D playerDoubleJumpFrames[PLAYER_DOUBLE_JUMP_FRAME_COUNT];
+    for (int i = 0; i < PLAYER_DOUBLE_JUMP_FRAME_COUNT; i++) {
+        const char *path = TextFormat("%sassets/%s", GetApplicationDirectory(), playerDoubleJumpFrameFiles[i]);
+        playerDoubleJumpFrames[i] = LoadTexture(path);
+    }
+
+    const char *playerCastFireballFrameFiles[PLAYER_CAST_FRAME_COUNT] = {
+        "player/cast_fireball/1_charge_low.png",
+        "player/cast_fireball/2_charge_high.png",
+        "player/cast_fireball/3_release.png",
+        "player/cast_fireball/4_recovery.png",
+    };
+    Texture2D playerCastFireballFrames[PLAYER_CAST_FRAME_COUNT];
+    for (int i = 0; i < PLAYER_CAST_FRAME_COUNT; i++) {
+        const char *path = TextFormat("%sassets/%s", GetApplicationDirectory(), playerCastFireballFrameFiles[i]);
+        playerCastFireballFrames[i] = LoadTexture(path);
+    }
+
+    const char *playerCastFrostFrameFiles[PLAYER_CAST_FRAME_COUNT] = {
+        "player/cast_frost/1_gather.png",
+        "player/cast_frost/2_swirl.png",
+        "player/cast_frost/3_release.png",
+        "player/cast_frost/4_recovery.png",
+    };
+    Texture2D playerCastFrostFrames[PLAYER_CAST_FRAME_COUNT];
+    for (int i = 0; i < PLAYER_CAST_FRAME_COUNT; i++) {
+        const char *path = TextFormat("%sassets/%s", GetApplicationDirectory(), playerCastFrostFrameFiles[i]);
+        playerCastFrostFrames[i] = LoadTexture(path);
+    }
+
+    const char *fireballSpritePath = TextFormat("%sassets/spells/fireball.png", GetApplicationDirectory());
+    Texture2D fireballTexture = LoadTexture(fireballSpritePath);
+
+    PlayerSprites playerSprites = {
+        playerTexture, playerBloatedTexture, playerAttackFrames, playerJumpFrames,
+        playerDoubleJumpFrames, playerSlamFrames, playerCastFireballFrames, playerCastFrostFrames
+    };
 
     float groundY = VIRTUAL_HEIGHT - 20.0f;
     Player player = PlayerCreate({(float)VIRTUAL_WIDTH / 2, groundY - 20});
@@ -483,6 +556,7 @@ int main() {
     Rectangle settingsButtonRect = {
         4 + 2 * (SCROLL_BUTTON_SIZE + 4), HUD_PANEL_HEIGHT + 4, (float)SCROLL_BUTTON_SIZE, (float)SCROLL_BUTTON_SIZE
     };
+    bool hostilityDisabled = false; // temporary testing toggle, lives in the settings panel
 
     int lastCountdownSecond = -1;
     float countdownPopTimer = 0.0f;
@@ -540,8 +614,9 @@ int main() {
         Rectangle infoRect = {20, 40, (float)(VIRTUAL_WIDTH - 40), 96};
         Rectangle infoCloseBtn = {infoRect.x + infoRect.width - 16, infoRect.y + 3, 12, 12};
 
-        Rectangle settingsRect = {20, 20, (float)(VIRTUAL_WIDTH - 40), 145};
+        Rectangle settingsRect = {20, 20, (float)(VIRTUAL_WIDTH - 40), 147};
         Rectangle settingsCloseBtn = {settingsRect.x + settingsRect.width - 16, settingsRect.y + 3, 12, 12};
+        Rectangle hostilityToggleRect = {settingsRect.x + 10, settingsRect.y + 127, settingsRect.width - 20, 14};
 
         Rectangle retryButtonRect = {VIRTUAL_WIDTH / 2.0f - 50, VIRTUAL_HEIGHT / 2.0f + 10, 45, 18};
         Rectangle closeButtonRect = {VIRTUAL_WIDTH / 2.0f + 5, VIRTUAL_HEIGHT / 2.0f + 10, 45, 18};
@@ -669,7 +744,6 @@ int main() {
                     beerDrop.position = deathCenter;
                     beerDrop.velocity = {popDir * BEER_POP_SPEED, -BEER_POP_SPEED * 1.5f};
                     beerDrop.active = true;
-                    beerDrop.timer = BEER_POP_DURATION;
                 }
             };
 
@@ -683,13 +757,29 @@ int main() {
                 bool diedFromBurn = EnemyUpdate(enemies[ei], dt, groundY, (float)VIRTUAL_WIDTH, player.position.x + player.width / 2.0f);
                 handleEnemyDeath(typeBeforeUpdate, enemyCenterBeforeUpdate, diedFromBurn);
 
-                if (EnemyTryAttackPlayer(enemies[ei], playerRect)) {
+                if (!hostilityDisabled && EnemyTryAttackPlayer(enemies[ei], playerRect)) {
                     player.health -= EnemyAttackDamage(enemies[ei].type);
                     PlaySound(playerHitSound);
                     if (player.health <= 0) {
                         player.health = 0;
                         gameOver = true;
                         PlaySound(playerDeathSound);
+                    }
+                }
+            }
+
+            if (player.slamImpactThisFrame) {
+                Vector2 slamCenter = {player.position.x + player.width / 2.0f, player.position.y + player.height};
+                for (int ei = 0; ei < ENEMY_COUNT; ei++) {
+                    Vector2 enemyCenterBeforeSlam = {enemies[ei].position.x + enemies[ei].width / 2.0f, enemies[ei].position.y + enemies[ei].height / 2.0f};
+                    float dx = enemyCenterBeforeSlam.x - slamCenter.x;
+                    float dy = enemyCenterBeforeSlam.y - slamCenter.y;
+                    if (sqrtf(dx * dx + dy * dy) <= SLAM_RADIUS) {
+                        int scaledSlamDamage = (int)(SLAM_DAMAGE * (tuneValue / 100.0f));
+                        EnemyType typeBeforeSlam = enemies[ei].type;
+                        bool diedFromSlam = EnemyTakeDamage(enemies[ei], scaledSlamDamage, groundY, (float)VIRTUAL_WIDTH);
+                        PlaySound(enemyHitSound);
+                        handleEnemyDeath(typeBeforeSlam, enemyCenterBeforeSlam, diedFromSlam);
                     }
                 }
             }
@@ -746,6 +836,8 @@ int main() {
                     showSpellInfo = false;
                 } else if (showSettings && CheckCollisionPointRec(mouseVirtual, settingsCloseBtn)) {
                     showSettings = false;
+                } else if (showSettings && CheckCollisionPointRec(mouseVirtual, hostilityToggleRect)) {
+                    hostilityDisabled = !hostilityDisabled;
                 } else if (CheckCollisionPointRec(mouseVirtual, scrollButtonRect)) {
                     showSpellInfo = !showSpellInfo;
                     showSettings = false;
@@ -766,6 +858,7 @@ int main() {
                 if (cast == Spell::FIREBALL) {
                     printf("FIREBALL CAST\n");
                     player.flashTimer = 0.3f;
+                    PlayerStartCast(player, CastAnim::FIREBALL);
 
                     fireball.facingRight = player.facingRight;
                     fireball.position = {
@@ -792,6 +885,7 @@ int main() {
                     spellNameTimer = SPELL_NAME_DISPLAY_TIME;
                 } else if (cast == Spell::FROST) {
                     printf("FROST CAST\n");
+                    PlayerStartCast(player, CastAnim::FROST);
                     Vector2 blastCenter = {
                         player.position.x + player.width / 2,
                         player.position.y + player.height / 2
@@ -885,11 +979,34 @@ int main() {
             }
 
             if (beerDrop.active) {
-                beerDrop.velocity.y += BEER_POP_GRAVITY * dt;
-                beerDrop.position.x += beerDrop.velocity.x * dt;
-                beerDrop.position.y += beerDrop.velocity.y * dt;
-                beerDrop.timer -= dt;
-                if (beerDrop.timer <= 0.0f) {
+                float beerHalfHeight = BEER_DROP_SIZE * 0.6f; // DrawBeerIcon's h/2, h = size * 1.2
+                bool onGround = (beerDrop.position.y + beerHalfHeight >= groundY);
+                if (!onGround) {
+                    beerDrop.velocity.y += BEER_POP_GRAVITY * dt;
+                    beerDrop.position.x += beerDrop.velocity.x * dt;
+                    beerDrop.position.y += beerDrop.velocity.y * dt;
+                    if (beerDrop.position.y + beerHalfHeight >= groundY) {
+                        beerDrop.position.y = groundY - beerHalfHeight;
+                        beerDrop.velocity = {0, 0};
+                        beerDrop.groundTimer = BEER_GROUND_DURATION;
+                    }
+                } else {
+                    beerDrop.groundTimer -= dt;
+                    if (beerDrop.groundTimer <= 0.0f) {
+                        beerDrop.active = false;
+                    }
+                }
+            }
+
+            if (beerDrop.active) {
+                float beerHalfHeight = BEER_DROP_SIZE * 0.6f;
+                Rectangle beerRect = {
+                    beerDrop.position.x - BEER_DROP_SIZE / 2.0f,
+                    beerDrop.position.y - beerHalfHeight,
+                    BEER_DROP_SIZE,
+                    beerHalfHeight * 2.0f
+                };
+                if (CheckCollisionRecs(beerRect, playerRect)) {
                     beerDrop.active = false;
                     PlayerDrinkBeer(player);
                     healTextTimer = FLOATING_TEXT_DURATION;
@@ -958,13 +1075,17 @@ int main() {
             } else {
             DrawTexturePro(caveTexture, caveSrc, caveDst, {0, 0}, 0.0f, WHITE);
             DrawLine(0, (int)groundY, VIRTUAL_WIDTH, (int)groundY, DARKGRAY);
-            PlayerDraw(player, playerTexture);
+            PlayerDraw(player, playerSprites);
             for (int ei = 0; ei < ENEMY_COUNT; ei++) {
                 EnemyDraw(enemies[ei]);
             }
 
             if (fireball.active) {
-                DrawFireball(fireball.position, FIREBALL_RADIUS, fireball.facingRight);
+                Rectangle fireballSrc = {0, 0, (float)fireballTexture.width, (float)fireballTexture.height};
+                if (!fireball.facingRight) fireballSrc.width = -fireballSrc.width;
+                Rectangle fireballDst = {fireball.position.x, fireball.position.y, FIREBALL_SPRITE_WIDTH, FIREBALL_SPRITE_HEIGHT};
+                Vector2 fireballOrigin = {FIREBALL_SPRITE_WIDTH / 2.0f, FIREBALL_SPRITE_HEIGHT / 2.0f};
+                DrawTexturePro(fireballTexture, fireballSrc, fireballDst, fireballOrigin, 0.0f, WHITE);
             }
 
             if (frostBlast.active) {
@@ -973,7 +1094,7 @@ int main() {
             }
 
             if (beerDrop.active) {
-                DrawBeerIcon(beerDrop.position, 8.0f, 1.0f);
+                DrawBeerIcon(beerDrop.position, BEER_DROP_SIZE, 1.0f);
             }
 
             // Floating pickup feedback: heal text rises above bloat text so
@@ -1017,7 +1138,15 @@ int main() {
                 float lightStrength = (lightTimer > LIGHT_FADE_DURATION)
                     ? 1.0f
                     : (lightTimer / LIGHT_FADE_DURATION);
-                float centerDarkAlpha = AMBIENT_DARK_ALPHA * (1.0f - lightStrength);
+
+                // Pulses the light's brightness between 100% and LIGHT_PULSE_MIN so it
+                // reads as actively illuminating rather than a static hole in the dark.
+                float elapsedSinceCast = LIGHT_DURATION - lightTimer;
+                float pulseMid = (1.0f + LIGHT_PULSE_MIN) / 2.0f;
+                float pulseAmplitude = (1.0f - LIGHT_PULSE_MIN) / 2.0f;
+                float pulse = pulseMid + pulseAmplitude * sinf(elapsedSinceCast * (2.0f * PI / LIGHT_PULSE_PERIOD));
+
+                float centerDarkAlpha = AMBIENT_DARK_ALPHA * (1.0f - lightStrength * pulse);
 
                 Vector2 lightCenter = {
                     player.position.x + player.width / 2,
@@ -1036,6 +1165,17 @@ int main() {
                 }
                 UpdateTexture(lightMaskTexture, lightMaskPixels.data());
                 DrawTexture(lightMaskTexture, 0, 0, WHITE);
+            }
+
+            if (frostBlast.active) {
+                // A light blue glow marking the blast radius, drawn over the darkness
+                // so it reads clearly even in a dark cave. Brightness ramps up with
+                // the burst instead of appearing instantly at full strength.
+                float frostProgress = 1.0f - (frostBlast.timer / FROST_BLAST_ANIM_DURATION);
+                float glowAlpha = frostProgress * FROST_LIGHT_MAX_ALPHA;
+                Color frostLightInner = Fade(Color{160, 220, 255, 255}, glowAlpha);
+                Color frostLightOuter = Fade(Color{160, 220, 255, 255}, 0.0f);
+                DrawCircleGradient((int)frostBlast.position.x, (int)frostBlast.position.y, FROST_BLAST_RADIUS, frostLightInner, frostLightOuter);
             }
 
             // HUD backdrops: indicators read the player's state, not the
@@ -1269,7 +1409,7 @@ int main() {
                 DrawRectangleRounded(settingsRect, 0.06f, 8, RAYWHITE);
                 DrawRectangleRoundedLinesEx(settingsRect, 0.06f, 8, 2.0f, BLACK);
 
-                const char *settingsTitle = "KEYBINDINGS";
+                const char *settingsTitle = "SETTINGS";
                 int settingsTitleWidth = MeasureText(settingsTitle, 12);
                 DrawText(settingsTitle, (int)(settingsRect.x + (settingsRect.width - settingsTitleWidth) / 2), (int)settingsRect.y + 4, 12, BLACK);
 
@@ -1294,13 +1434,25 @@ int main() {
                 };
                 int rowCount = sizeof(rows) / sizeof(rows[0]);
 
-                int rowY = (int)settingsRect.y + 22;
+                int rowY = (int)settingsRect.y + 20;
                 for (int i = 0; i < rowCount; i++) {
                     DrawText(rows[i].action, (int)settingsRect.x + 10, rowY, 8, BLACK);
                     int keysWidth = MeasureText(rows[i].keys, 8);
                     DrawText(rows[i].keys, (int)(settingsRect.x + settingsRect.width - keysWidth - 10), rowY, 8, DARKGRAY);
-                    rowY += 15;
+                    rowY += 13;
                 }
+
+                DrawLine((int)settingsRect.x + 10, (int)settingsRect.y + 123, (int)(settingsRect.x + settingsRect.width - 10), (int)settingsRect.y + 123, LIGHTGRAY);
+
+                Color hostilityBtnColor = hostilityDisabled ? Color{200, 90, 90, 255} : LIGHTGRAY;
+                DrawRectangleRec(hostilityToggleRect, hostilityBtnColor);
+                DrawRectangleLinesEx(hostilityToggleRect, 1.0f, BLACK);
+                const char *hostilityText = hostilityDisabled ? "Disable Hostility: ON" : "Disable Hostility: OFF";
+                int hostilityTextWidth = MeasureText(hostilityText, 8);
+                DrawText(hostilityText,
+                    (int)(hostilityToggleRect.x + (hostilityToggleRect.width - hostilityTextWidth) / 2),
+                    (int)(hostilityToggleRect.y + (hostilityToggleRect.height - 8) / 2),
+                    8, BLACK);
             }
 
             if (gameOver) {
@@ -1348,6 +1500,24 @@ int main() {
     UnloadTexture(pianoPanelMask);
     UnloadTexture(caveTexture);
     UnloadTexture(playerTexture);
+    for (int i = 0; i < PLAYER_ATTACK_FRAME_COUNT; i++) {
+        UnloadTexture(playerAttackFrames[i]);
+    }
+    UnloadTexture(playerBloatedTexture);
+    for (int i = 0; i < PLAYER_JUMP_FRAME_COUNT; i++) {
+        UnloadTexture(playerJumpFrames[i]);
+    }
+    for (int i = 0; i < PLAYER_SLAM_FRAME_COUNT; i++) {
+        UnloadTexture(playerSlamFrames[i]);
+    }
+    for (int i = 0; i < PLAYER_DOUBLE_JUMP_FRAME_COUNT; i++) {
+        UnloadTexture(playerDoubleJumpFrames[i]);
+    }
+    for (int i = 0; i < PLAYER_CAST_FRAME_COUNT; i++) {
+        UnloadTexture(playerCastFireballFrames[i]);
+        UnloadTexture(playerCastFrostFrames[i]);
+    }
+    UnloadTexture(fireballTexture);
     UnloadRenderTexture(canvas);
     CloseAudioDevice();
     CloseWindow();
