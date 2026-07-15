@@ -1,5 +1,5 @@
---- a/src/platforms/rcore_ios_main.m	2026-07-15 14:14:20
-+++ b/src/platforms/rcore_ios_main.m	2026-07-15 14:11:09
+--- a/src/platforms/rcore_ios_main.m
++++ b/src/platforms/rcore_ios_main.m
 @@ -224,7 +224,16 @@
  }
  
@@ -18,13 +18,22 @@
    self.view.multipleTouchEnabled = YES;
  }
  
-@@ -492,9 +501,13 @@
+@@ -492,9 +501,22 @@
  
    __block bool ok = false;
    dispatch_sync(dispatch_get_main_queue(), ^{
-+    CGRect screenBounds = [UIScreen mainScreen].bounds;
-+    CGFloat landscapeW = MAX(screenBounds.size.width, screenBounds.size.height);
-+    CGFloat landscapeH = MIN(screenBounds.size.width, screenBounds.size.height);
++    // nativeBounds/nativeScale always report the panel's raw pixels in its
++    // native (manufacturing) orientation -- portrait, for every iPhone --
++    // regardless of the app's current interface orientation, unlike
++    // UIScreen.mainScreen.bounds. This gives a reliable physical panel size
++    // to rotate our landscape content onto below.
++    UIScreen *mainScreen = [UIScreen mainScreen];
++    CGSize nativePixels = mainScreen.nativeBounds.size;
++    CGFloat nativeScale = mainScreen.nativeScale;
++    CGFloat physicalW = nativePixels.width / nativeScale;
++    CGFloat physicalH = nativePixels.height / nativeScale;
++    CGFloat landscapeW = MAX(physicalW, physicalH);
++    CGFloat landscapeH = MIN(physicalW, physicalH);
 +    CGRect landscapeFrame = CGRectMake(0, 0, landscapeW, landscapeH);
 +
      if (ios.window == nil) {
@@ -34,17 +43,33 @@
      }
  
      if (ios.viewController == nil) {
-@@ -504,12 +517,23 @@
+@@ -504,12 +526,39 @@
      ios.window.rootViewController = ios.viewController;
      [ios.window makeKeyAndVisible];
  
-+    // makeKeyAndVisible can have UIKit resize the root view back to the
-+    // window's/screen's native (portrait) bounds as part of its own layout
-+    // pass, undoing the landscape frame loadView set. Re-assert both frames
-+    // right before the GL renderbuffer is actually created from them, since
-+    // that's the last moment they can be corrected.
-+    ios.window.frame = landscapeFrame;
-+    ios.viewController.view.frame = landscapeFrame;
++    // This fork never runs through UIKit's normal orientation-transition
++    // machinery (no storyboard, a hand-rolled CAEAGLLayer view), so nothing
++    // ever applies the rotation transform that normally maps a landscape
++    // app's content onto a physically-portrait panel. Without it, the
++    // landscape-shaped content renders correctly internally but only
++    // occupies a small, unrotated slice of the actual (portrait) physical
++    // screen. Fix: keep the window's own coordinate space landscape-shaped
++    // (so GL/layer sizing math is unaffected) but rotate its presentation
++    // 90 degrees and center it on the true physical panel.
++    //
++    // Only +90 degrees renders anything at all on this fork's compositor --
++    // -90/270 (the same rotation mathematically) and adding any further
++    // transform on top (e.g. an extra 180 to fix the mirroring below)
++    // produces a blank black screen instead, some quirk in how this
++    // hand-rolled CAEAGLLayer setup interacts with the window server. So
++    // +90 is applied here and left as the only UIKit-side transform; +90
++    // alone leaves the content upside-down/mirrored, which is corrected in
++    // the game's own Camera2D instead (see main.cpp, PLATFORM_IOS branch)
++    // rather than fighting this compositor further.
++    ios.window.transform = CGAffineTransformIdentity;
++    ios.window.bounds = landscapeFrame;
++    ios.window.center = CGPointMake(physicalW / 2.0, physicalH / 2.0);
++    ios.window.transform = CGAffineTransformMakeRotation(M_PI_2);
 +
      ok = ios_setup_gl();
  

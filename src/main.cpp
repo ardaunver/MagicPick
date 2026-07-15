@@ -648,9 +648,16 @@ int main() {
         float screenW = (float)GetScreenWidth();
         float screenH = (float)GetScreenHeight();
         camera.zoom = fminf(screenW / VIRTUAL_WIDTH, screenH / VIRTUAL_HEIGHT);
+        // The vendored iOS fork can only present its window rotated +90
+        // degrees (any other rotation renders a blank screen -- a quirk of
+        // its hand-rolled CAEAGLLayer setup, see rcore_ios_main.m), which
+        // leaves content mirrored 180 degrees from correct. Compensating
+        // with an extra 180 here, entirely within our own Camera2D, is safe
+        // since it doesn't touch UIKit at all.
+        camera.rotation = 180.0f;
         camera.offset = {
-            (screenW - VIRTUAL_WIDTH * camera.zoom) / 2.0f,
-            (screenH - VIRTUAL_HEIGHT * camera.zoom) / 2.0f
+            (screenW + VIRTUAL_WIDTH * camera.zoom) / 2.0f,
+            (screenH + VIRTUAL_HEIGHT * camera.zoom) / 2.0f
         };
         TouchControlsUpdate(dt, camera);
 #endif

@@ -59,6 +59,7 @@ if(IS_IOS)
         "-framework OpenGLES"
         "-framework CoreMotion"
         "-framework Foundation"
+        "-framework CoreGraphics"
     )
 
     # Bundle assets as resources so they end up inside MagicPick.app instead
