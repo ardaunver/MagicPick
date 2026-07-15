@@ -30,6 +30,7 @@ if(IS_IOS)
         src/chord_system.cpp
         src/enemy.cpp
         src/ios_audio_stub.cpp
+        src/touch_controls.cpp
     )
     set_target_properties(guitarist_sorcerer PROPERTIES
         OUTPUT_NAME "MagicPick"

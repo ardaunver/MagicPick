@@ -7,6 +7,10 @@
 #include <cstdlib>
 #include <vector>
 
+#if defined(PLATFORM_IOS)
+#include "touch_controls.h"
+#endif
+
 // raylib changed DrawCircleGradient's signature from (int,int,float,Color,Color)
 // to (Vector2,float,Color,Color) around version 6.0. Desktop/Windows here
 // build against 5.5 (old signature); the iOS fork is on a newer snapshot
@@ -428,6 +432,7 @@ int main() {
     // bug entirely. Revisit if/when the fork's render-texture support is fixed.
     Camera2D camera = {0};
     camera.zoom = (float)SCALE;
+    TouchControls touchControls = TouchControlsCreate((float)VIRTUAL_WIDTH, (float)VIRTUAL_HEIGHT);
 #else
     RenderTexture2D canvas = LoadRenderTexture(VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
     Rectangle canvasSrc = {0, 0, (float)VIRTUAL_WIDTH, -(float)VIRTUAL_HEIGHT};
@@ -633,6 +638,10 @@ int main() {
 
     while (!WindowShouldClose() && !requestClose) {
         float dt = GetFrameTime();
+
+#if defined(PLATFORM_IOS)
+        TouchControlsUpdate(touchControls, dt, (float)SCALE);
+#endif
 
         float tuneValue = 100.0f * expf(-TUNE_DECAY_RATE * tuneTimer);
         if (tuneTimer >= TUNE_DURATION_SECONDS) tuneValue = 0.0f;
@@ -1519,6 +1528,9 @@ int main() {
             }
             }
 #if defined(PLATFORM_IOS)
+        if (!showTitleScreen) {
+            TouchControlsDraw(touchControls);
+        }
         EndMode2D();
         EndDrawing();
 #else
