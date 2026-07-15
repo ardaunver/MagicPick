@@ -20,6 +20,13 @@
 	<string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<!-- Without a declared launch screen, iOS runs the app in a legacy
+	     compatibility mode that reports old iPhone 3GS-era screen
+	     dimensions (320x480) instead of the real device size -- an empty
+	     UILaunchScreen dict is enough to opt into native, full-resolution
+	     behavior without needing an actual storyboard/xib file. -->
+	<key>UILaunchScreen</key>
+	<dict/>
 	<key>UIRequiresFullScreen</key>
 	<true/>
 	<key>UIStatusBarHidden</key>

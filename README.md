@@ -76,11 +76,10 @@ device to landscape (Device menu → Rotate Left/Right, or Cmd+Left/Right) —
 the app is landscape-locked, but the Simulator's own device orientation is
 a separate setting that starts in portrait regardless.
 
-**Current status:** builds and renders correctly on the iOS Simulator.
-Touch controls (movement joystick, jump/attack buttons, chord wheel) exist
-and respond to touch, but aren't yet wired to player movement, combat, or
-spellcasting. Audio is disabled (the vendored fork's audio backend doesn't
-compile for iOS yet).
+**Current status:** builds and renders correctly on the iOS Simulator, with
+touch controls (movement joystick, jump/attack buttons, chord wheel) wired
+into gameplay (movement, jump, attack, spellcasting). Audio is disabled (the
+vendored fork's audio backend doesn't compile for iOS yet).
 
 ## Distribution
 
