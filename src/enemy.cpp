@@ -166,7 +166,10 @@ bool EnemyUpdate(Enemy &enemy, float dt, float groundY, float screenWidth, float
     return false;
 }
 
-bool EnemyTakeDamage(Enemy &enemy, int damage, float groundY, float screenWidth) {
+bool EnemyTakeDamage(Enemy &enemy, int damage, float groundY, float screenWidth, bool fromSlam) {
+    if (enemy.type == EnemyType::SPIDER && !fromSlam) {
+        return false; // spiders shrug off anything but a ground slam
+    }
     enemy.health -= damage;
     if (enemy.health <= 0) {
         RandomizeEnemy(enemy, groundY, screenWidth);

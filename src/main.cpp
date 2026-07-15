@@ -7,6 +7,18 @@
 #include <cstdlib>
 #include <vector>
 
+// raylib changed DrawCircleGradient's signature from (int,int,float,Color,Color)
+// to (Vector2,float,Color,Color) around version 6.0. Desktop/Windows here
+// build against 5.5 (old signature); the iOS fork is on a newer snapshot
+// (new signature). This wrapper hides the difference at the two call sites.
+static void DrawCircleGradientCompat(float x, float y, float radius, Color inner, Color outer) {
+#if defined(PLATFORM_IOS)
+    DrawCircleGradient(Vector2{x, y}, radius, inner, outer);
+#else
+    DrawCircleGradient((int)x, (int)y, radius, inner, outer);
+#endif
+}
+
 static const int VIRTUAL_WIDTH = 320;
 static const int VIRTUAL_HEIGHT = 180;
 static const int SCALE = 3;
@@ -338,7 +350,7 @@ static void DrawFrostBlast(Vector2 center, float radius, float progress) {
 
     Color innerColor = Fade(Color{210, 245, 255, 255}, alpha * 0.7f);
     Color outerColor = Fade(Color{20, 90, 220, 255}, alpha * 0.6f);
-    DrawCircleGradient((int)center.x, (int)center.y, currentRadius, innerColor, outerColor);
+    DrawCircleGradientCompat(center.x, center.y, currentRadius, innerColor, outerColor);
     DrawCircleLines((int)center.x, (int)center.y, currentRadius, Fade(Color{130, 200, 255, 255}, alpha * 0.9f));
 
     int shardCount = 8;
@@ -391,20 +403,41 @@ static void DrawGhostIcon(Vector2 center, float size) {
     DrawCircle((int)(center.x + w * 0.18f), (int)(center.y - h * 0.08f), w * 0.09f, BLACK);
 }
 
+// On iOS, the platform's own Objective-C main() (rcore_ios_main.m) owns the
+// app lifecycle and calls this on its own dispatched thread instead of us
+// providing a normal main(). Desktop/Windows keep a plain main().
+#if defined(PLATFORM_IOS)
+extern "C" int raylib_main(int argc, char *argv[]) {
+#else
 int main() {
+#endif
+    // Without this, Windows displays with scaling above 100% (very common on
+    // laptops) can make the window come out smaller than requested.
+    SetConfigFlags(FLAG_WINDOW_HIGHDPI);
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Magic Pick");
     SetExitKey(KEY_NULL); // ESC is used to close UI panels, not quit the app
     InitAudioDevice();
     SetTargetFPS(60);
 
+#if defined(PLATFORM_IOS)
+    // BeginTextureMode/EndTextureMode (render-to-texture) renders a black
+    // screen on this iOS fork -- confirmed via isolated repro, a bug in the
+    // platform layer itself, not our drawing code. BeginMode2D with a zoomed
+    // camera achieves the same "320x180 virtual canvas, scaled up" pixel-art
+    // look without ever creating an offscreen framebuffer, sidestepping the
+    // bug entirely. Revisit if/when the fork's render-texture support is fixed.
+    Camera2D camera = {0};
+    camera.zoom = (float)SCALE;
+#else
     RenderTexture2D canvas = LoadRenderTexture(VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
     Rectangle canvasSrc = {0, 0, (float)VIRTUAL_WIDTH, -(float)VIRTUAL_HEIGHT};
     Rectangle canvasDst = {0, 0, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT};
+#endif
 
     Texture2D pianoPanelMask = CreatePanelMask(PIANO_PANEL_WIDTH, PIANO_PANEL_HEIGHT, PANEL_FEATHER_MARGIN);
     // Resolve relative to the executable's own folder, not the working
     // directory, so double-clicking the packaged app finds its assets.
-    const char *caveTexturePath = TextFormat("%sassets/cave.jpg", GetApplicationDirectory());
+    const char *caveTexturePath = TextFormat("%sassets/cave.png", GetApplicationDirectory());
     Texture2D caveTexture = LoadTexture(caveTexturePath);
     Rectangle caveSrc = {0, 0, (float)caveTexture.width, (float)caveTexture.height};
     Rectangle caveDst = {0, 0, (float)VIRTUAL_WIDTH, (float)VIRTUAL_HEIGHT};
@@ -777,7 +810,7 @@ int main() {
                     if (sqrtf(dx * dx + dy * dy) <= SLAM_RADIUS) {
                         int scaledSlamDamage = (int)(SLAM_DAMAGE * (tuneValue / 100.0f));
                         EnemyType typeBeforeSlam = enemies[ei].type;
-                        bool diedFromSlam = EnemyTakeDamage(enemies[ei], scaledSlamDamage, groundY, (float)VIRTUAL_WIDTH);
+                        bool diedFromSlam = EnemyTakeDamage(enemies[ei], scaledSlamDamage, groundY, (float)VIRTUAL_WIDTH, true);
                         PlaySound(enemyHitSound);
                         handleEnemyDeath(typeBeforeSlam, enemyCenterBeforeSlam, diedFromSlam);
                     }
@@ -962,7 +995,7 @@ int main() {
                         bool diedFromFireball = EnemyTakeDamage(enemies[ei], scaledFireballDamage, groundY, (float)VIRTUAL_WIDTH);
                         PlaySound(enemyHitSound);
                         handleEnemyDeath(typeBeforeFireball, enemyCenterBeforeFireball, diedFromFireball);
-                        if (enemies[ei].health > 0) {
+                        if (enemies[ei].health > 0 && enemies[ei].type != EnemyType::SPIDER) {
                             int scaledBurnDamage = (int)(FIREBALL_BURN_DAMAGE * (tuneValue / 100.0f));
                             EnemyIgnite(enemies[ei], scaledBurnDamage, FIREBALL_BURN_DURATION);
                         }
@@ -1028,7 +1061,12 @@ int main() {
             }
         }
 
+#if defined(PLATFORM_IOS)
+        BeginDrawing();
+        BeginMode2D(camera);
+#else
         BeginTextureMode(canvas);
+#endif
             ClearBackground(BLACK);
             if (showTitleScreen) {
                 DrawTexturePro(caveTexture, caveSrc, caveDst, {0, 0}, 0.0f, WHITE);
@@ -1175,7 +1213,7 @@ int main() {
                 float glowAlpha = frostProgress * FROST_LIGHT_MAX_ALPHA;
                 Color frostLightInner = Fade(Color{160, 220, 255, 255}, glowAlpha);
                 Color frostLightOuter = Fade(Color{160, 220, 255, 255}, 0.0f);
-                DrawCircleGradient((int)frostBlast.position.x, (int)frostBlast.position.y, FROST_BLAST_RADIUS, frostLightInner, frostLightOuter);
+                DrawCircleGradientCompat(frostBlast.position.x, frostBlast.position.y, FROST_BLAST_RADIUS, frostLightInner, frostLightOuter);
             }
 
             // HUD backdrops: indicators read the player's state, not the
@@ -1480,12 +1518,17 @@ int main() {
                 DrawText(closeText, (int)(closeButtonRect.x + (closeButtonRect.width - closeWidth) / 2), (int)closeButtonRect.y + 4, 10, BLACK);
             }
             }
+#if defined(PLATFORM_IOS)
+        EndMode2D();
+        EndDrawing();
+#else
         EndTextureMode();
 
         BeginDrawing();
             ClearBackground(BLACK);
             DrawTexturePro(canvas.texture, canvasSrc, canvasDst, {0, 0}, 0.0f, WHITE);
         EndDrawing();
+#endif
     }
 
     for (int i = 0; i < NOTE_KEY_COUNT; i++) {
@@ -1518,7 +1561,9 @@ int main() {
         UnloadTexture(playerCastFrostFrames[i]);
     }
     UnloadTexture(fireballTexture);
+#if !defined(PLATFORM_IOS)
     UnloadRenderTexture(canvas);
+#endif
     CloseAudioDevice();
     CloseWindow();
     return 0;

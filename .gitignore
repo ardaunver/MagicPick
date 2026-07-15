@@ -1,6 +1,8 @@
 build/
 build_windows/
+build_ios/
 dist/
 .DS_Store
 .claude/settings.local.json
-assets/cave.jpg
+assets/cave.png
+vendor/

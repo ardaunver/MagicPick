@@ -41,7 +41,9 @@ Enemy EnemyCreate(float groundY, float screenWidth);
 bool EnemyUpdate(Enemy &enemy, float dt, float groundY, float screenWidth, float playerCenterX);
 // Applies damage; respawns as a new random type at a random location once
 // health hits 0. Returns true if this hit killed (and respawned) the enemy.
-bool EnemyTakeDamage(Enemy &enemy, int damage, float groundY, float screenWidth);
+// Spiders are armored against everything except a ground slam -- pass
+// fromSlam = true only for that hit, or the damage is ignored entirely.
+bool EnemyTakeDamage(Enemy &enemy, int damage, float groundY, float screenWidth, bool fromSlam = false);
 // Starts (or refreshes) a damage-over-time burn lasting `duration` seconds,
 // dealing `totalDamage` spread evenly across that time.
 void EnemyIgnite(Enemy &enemy, int totalDamage, float duration);
