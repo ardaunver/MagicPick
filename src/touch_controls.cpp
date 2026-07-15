@@ -96,7 +96,20 @@ static float Dist(Vector2 a, Vector2 b) {
     return sqrtf(dx * dx + dy * dy);
 }
 
-void TouchControlsUpdate(float dt, Camera2D camera) {
+static Vector2 ScreenToVirtual(Vector2 screenPos, ScreenFit fit) {
+    if (fit.rotated180) {
+        return {
+            (fit.offsetX - screenPos.x) / fit.scaleX,
+            (fit.offsetY - screenPos.y) / fit.scaleY
+        };
+    }
+    return {
+        (screenPos.x - fit.offsetX) / fit.scaleX,
+        (screenPos.y - fit.offsetY) / fit.scaleY
+    };
+}
+
+void TouchControlsUpdate(float dt, ScreenFit fit) {
     g_tc.framedNoteCount = 0;
 
     int touchCount = GetTouchPointCount();
@@ -105,7 +118,7 @@ void TouchControlsUpdate(float dt, Camera2D camera) {
     if (touchCount > 16) touchCount = 16;
     for (int i = 0; i < touchCount; i++) {
         Vector2 screenPos = GetTouchPosition(i);
-        touchPos[i] = GetScreenToWorld2D(screenPos, camera);
+        touchPos[i] = ScreenToVirtual(screenPos, fit);
     }
 
     // Joystick: keep controlling the same touch index until it lifts.
@@ -227,6 +240,18 @@ int TouchControlsNotesPressed(Note *outNotes, int maxNotes) {
     int count = (g_tc.framedNoteCount < maxNotes) ? g_tc.framedNoteCount : maxNotes;
     for (int i = 0; i < count; i++) outNotes[i] = g_tc.framedNotes[i];
     return count;
+}
+
+bool TouchControlsTapped(ScreenFit fit, Vector2 *outVirtualPos) {
+    static bool hadTouchPrevFrame = false;
+    int touchCount = GetTouchPointCount();
+    bool hasTouchNow = touchCount > 0;
+    bool tapped = hasTouchNow && !hadTouchPrevFrame;
+    hadTouchPrevFrame = hasTouchNow;
+    if (tapped && outVirtualPos) {
+        *outVirtualPos = ScreenToVirtual(GetTouchPosition(0), fit);
+    }
+    return tapped;
 }
 
 void TouchControlsDraw() {

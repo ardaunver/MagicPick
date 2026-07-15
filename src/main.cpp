@@ -7,9 +7,15 @@
 #include <cstdlib>
 #include <vector>
 
-#if defined(PLATFORM_IOS)
-#include "touch_controls.h"
+#if defined(PLATFORM_IOS) || defined(PLATFORM_ANDROID)
+#define PLATFORM_MOBILE
 #endif
+
+// Included unconditionally for the ScreenFit type (used by
+// GetMenuTapPosition's signature on every platform) -- desktop never
+// actually calls the Touch* functions it also declares, so nothing here
+// needs touch_controls.cpp to be linked in on desktop.
+#include "touch_controls.h"
 
 // raylib changed DrawCircleGradient's signature from (int,int,float,Color,Color)
 // to (Vector2,float,Color,Color) around version 6.0. Desktop/Windows here
@@ -29,6 +35,21 @@ static const int SCALE = 3;
 static const int WINDOW_WIDTH = VIRTUAL_WIDTH * SCALE;
 static const int WINDOW_HEIGHT = VIRTUAL_HEIGHT * SCALE;
 static const int ENEMY_COUNT = 2;
+
+// Menu/title-screen button taps: desktop uses the mouse directly (fixed
+// SCALE maps window pixels to the virtual canvas). Mobile goes through
+// TouchControlsTapped instead of GetMousePosition()/IsMouseButtonPressed()
+// -- see touch_controls.h for why -- and needs the current per-frame
+// ScreenFit (real screen size varies / stretches, unlike desktop's window).
+static bool GetMenuTapPosition(ScreenFit fit, Vector2 *outVirtual) {
+#if defined(PLATFORM_MOBILE)
+    return TouchControlsTapped(fit, outVirtual);
+#else
+    (void)fit;
+    *outVirtual = { GetMousePosition().x / SCALE, GetMousePosition().y / SCALE };
+    return IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+#endif
+}
 
 struct Fireball {
     Vector2 position;
@@ -409,16 +430,30 @@ static void DrawGhostIcon(Vector2 center, float size) {
 
 // On iOS, the platform's own Objective-C main() (rcore_ios_main.m) owns the
 // app lifecycle and calls this on its own dispatched thread instead of us
-// providing a normal main(). Desktop/Windows keep a plain main().
+// providing a normal main(). Desktop/Windows/Android keep a plain main() --
+// Android's android_main() (in raylib's rcore_android.c) calls it directly
+// with argc/argv, expecting that exact signature.
 #if defined(PLATFORM_IOS)
 extern "C" int raylib_main(int argc, char *argv[]) {
 #else
-int main() {
+int main(int argc, char *argv[]) {
+    (void)argc;
+    (void)argv;
 #endif
     // Without this, Windows displays with scaling above 100% (very common on
     // laptops) can make the window come out smaller than requested.
     SetConfigFlags(FLAG_WINDOW_HIGHDPI);
+#if defined(PLATFORM_ANDROID)
+    // A nonzero size here is taken literally as the desired screen size --
+    // raylib then letterboxes/pads THAT (smaller, desktop-oriented 960x540)
+    // within the real display on its own, before our own canvas-stretch
+    // logic ever runs, which is what caused the persistent black bars even
+    // in true immersive fullscreen. Passing 0,0 makes it use the real
+    // display resolution directly instead.
+    InitWindow(0, 0, "Magic Pick");
+#else
     InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Magic Pick");
+#endif
     SetExitKey(KEY_NULL); // ESC is used to close UI panels, not quit the app
     InitAudioDevice();
     SetTargetFPS(60);
@@ -434,9 +469,17 @@ int main() {
     camera.zoom = (float)SCALE;
     TouchControlsInit((float)VIRTUAL_WIDTH, (float)VIRTUAL_HEIGHT);
 #else
+    // Android's real, official raylib backend doesn't have the iOS fork's
+    // render-to-texture bug, so desktop's approach works unchanged there too
+    // -- just with canvasDst recomputed every frame (below) from the actual
+    // screen size instead of a fixed window size, since phone screens vary
+    // and (unlike desktop) aren't a fixed size known up front.
     RenderTexture2D canvas = LoadRenderTexture(VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
     Rectangle canvasSrc = {0, 0, (float)VIRTUAL_WIDTH, -(float)VIRTUAL_HEIGHT};
     Rectangle canvasDst = {0, 0, (float)WINDOW_WIDTH, (float)WINDOW_HEIGHT};
+#if defined(PLATFORM_ANDROID)
+    TouchControlsInit((float)VIRTUAL_WIDTH, (float)VIRTUAL_HEIGHT);
+#endif
 #endif
 
     Texture2D pianoPanelMask = CreatePanelMask(PIANO_PANEL_WIDTH, PIANO_PANEL_HEIGHT, PANEL_FEATHER_MARGIN);
@@ -639,6 +682,10 @@ int main() {
     while (!WindowShouldClose() && !requestClose) {
         float dt = GetFrameTime();
 
+        // Unused (default identity) on desktop -- only mobile recomputes
+        // this each frame and feeds it to TouchControlsUpdate/menu tap hit-testing.
+        ScreenFit fit = {1.0f, 1.0f, 0.0f, 0.0f, false};
+
 #if defined(PLATFORM_IOS)
         // Fit the 320x180 virtual canvas to whatever the real screen size
         // turns out to be (device/orientation dependent, and this fork's
@@ -659,7 +706,19 @@ int main() {
             (screenW + VIRTUAL_WIDTH * camera.zoom) / 2.0f,
             (screenH + VIRTUAL_HEIGHT * camera.zoom) / 2.0f
         };
-        TouchControlsUpdate(dt, camera);
+        fit = {camera.zoom, camera.zoom, camera.offset.x, camera.offset.y, true};
+        TouchControlsUpdate(dt, fit);
+#elif defined(PLATFORM_ANDROID)
+        // Stretch independently on X/Y to fill the screen edge-to-edge
+        // (rather than the letterboxed, aspect-preserving fit iOS uses) --
+        // Android's real screen aspect ratio is rarely exactly 16:9, and the
+        // ask here was to fill the screen horizontally, accepting the minor
+        // pixel-art distortion that comes with a non-uniform stretch.
+        float screenW = (float)GetScreenWidth();
+        float screenH = (float)GetScreenHeight();
+        canvasDst = {0, 0, screenW, screenH};
+        fit = {screenW / VIRTUAL_WIDTH, screenH / VIRTUAL_HEIGHT, 0.0f, 0.0f, false};
+        TouchControlsUpdate(dt, fit);
 #endif
 
         float tuneValue = 100.0f * expf(-TUNE_DECAY_RATE * tuneTimer);
@@ -688,8 +747,8 @@ int main() {
         if (showTitleScreen) {
             titleBobTimer += dt;
 
-            Vector2 mouseVirtual = {GetMousePosition().x / SCALE, GetMousePosition().y / SCALE};
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            Vector2 mouseVirtual;
+            if (GetMenuTapPosition(fit, &mouseVirtual)) {
                 if (CheckCollisionPointRec(mouseVirtual, titleStartButtonRect)) {
                     showTitleScreen = false;
                 } else if (CheckCollisionPointRec(mouseVirtual, titleCloseButtonRect)) {
@@ -779,8 +838,8 @@ int main() {
                 tuneCooldownTimer = TUNE_COOLDOWN_DURATION;
             }
         } else if (gameOver) {
-            Vector2 mouseVirtual = {GetMousePosition().x / SCALE, GetMousePosition().y / SCALE};
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            Vector2 mouseVirtual;
+            if (GetMenuTapPosition(fit, &mouseVirtual)) {
                 if (CheckCollisionPointRec(mouseVirtual, retryButtonRect)) {
                     resetGame();
                 } else if (CheckCollisionPointRec(mouseVirtual, closeButtonRect)) {
@@ -891,8 +950,8 @@ int main() {
                 startTuneGame();
             }
 
-            Vector2 mouseVirtual = {GetMousePosition().x / SCALE, GetMousePosition().y / SCALE};
-            if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+            Vector2 mouseVirtual;
+            if (GetMenuTapPosition(fit, &mouseVirtual)) {
                 if (showSpellInfo && CheckCollisionPointRec(mouseVirtual, infoCloseBtn)) {
                     showSpellInfo = false;
                 } else if (showSettings && CheckCollisionPointRec(mouseVirtual, settingsCloseBtn)) {
@@ -992,7 +1051,7 @@ int main() {
                 applyCast(ChordBurstAddNote(chordBurst, note));
             }
 
-#if defined(PLATFORM_IOS)
+#if defined(PLATFORM_MOBILE)
             Note touchNotes[CHORD_WHEEL_GATE_COUNT];
             int touchNoteCount = TouchControlsNotesPressed(touchNotes, CHORD_WHEEL_GATE_COUNT);
             for (int n = 0; n < touchNoteCount; n++) {
@@ -1572,6 +1631,11 @@ int main() {
         EndMode2D();
         EndDrawing();
 #else
+#if defined(PLATFORM_ANDROID)
+        if (!showTitleScreen) {
+            TouchControlsDraw();
+        }
+#endif
         EndTextureMode();
 
         BeginDrawing();

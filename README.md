@@ -8,8 +8,9 @@ stance (melee combat with the guitar as a weapon).
 
 - **Language:** C++17
 - **Library:** [raylib](https://www.raylib.com/) 5.5
-- **Build system:** CMake
-- **Platforms:** macOS, Windows, iOS (see below)
+- **Build system:** CMake (desktop/iOS), a standalone shell script over the
+  Android NDK directly (Android -- raylib has no CMake path for it)
+- **Platforms:** macOS, Windows, iOS, Android (see below)
 
 All game art is either procedural (raylib primitives — shapes, gradients,
 particles) or hand-authored pixel art loaded as textures. There is no game
@@ -29,7 +30,7 @@ assets/
   spells/            spell effect sprites
   enemies/           enemy sprites
   cave.png           background
-vendor/              iOS-only raylib fork (fetched locally, not tracked in git)
+vendor/              iOS/Android raylib checkouts (fetched locally, not tracked in git)
 ```
 
 ## Building
@@ -80,6 +81,49 @@ a separate setting that starts in portrait regardless.
 touch controls (movement joystick, jump/attack buttons, chord wheel) wired
 into gameplay (movement, jump, attack, spellcasting). Audio is disabled (the
 vendored fork's audio backend doesn't compile for iOS yet).
+
+### Android
+
+Requires the Android SDK command-line tools, an NDK, and a JDK 17+ (e.g.
+`brew install --cask android-commandlinetools` and `brew install openjdk@17`,
+then `sdkmanager --sdk_root=<path> "platform-tools" "platforms;android-34"
+"build-tools;34.0.0" "ndk;26.3.11579264" "emulator"
+"system-images;android-34;google_apis;arm64-v8a"`).
+
+Unlike every other platform here, raylib has no CMake support for Android at
+all -- Android builds are Makefile-only upstream. So this target skips CMake
+entirely: fetch raylib's source, build it into a static library with its own
+Makefile, then compile this game's sources directly against it with the
+NDK's own clang and package the result by hand (no Gradle, no Android
+Studio project) via `android/build_apk.sh`.
+
+```
+./android/setup_raylib.sh   # fetches raylib 5.5 into vendor/raylib-android
+export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
+./android/build_apk.sh      # -> build_android/MagicPick.apk
+```
+
+Install and launch on a running emulator or connected device:
+
+```
+adb install build_android/MagicPick.apk
+adb shell am start -n com.ardaunver.magicpick/.MainActivity
+```
+
+The one bit of Java in this project (`android/MainActivity.java`, a thin
+`NativeActivity` subclass) exists only to request immersive/edge-to-edge
+mode -- something no C API exposes, and something raylib's Android backend
+needs to see *before* it captures the screen size, or the game renders
+letterboxed into the pre-immersive (smaller) area.
+
+**Current status:** builds and runs correctly, full landscape scaling
+(edge-to-edge, no letterboxing -- Android's official raylib backend needed
+none of the custom rotation/compositor workarounds the iOS fork required),
+with all touch controls (movement joystick, jump/attack buttons, chord
+wheel, menu taps) verified working via `adb shell input tap/swipe`. Audio
+works out of the box (raylib's Android audio backend compiles cleanly,
+unlike the iOS fork's).
 
 ## Distribution
 
