@@ -24,8 +24,11 @@ RAYLIB_SRC="$ROOT/vendor/raylib-android/src"
 CXX="$TOOLCHAIN/bin/aarch64-linux-android$API-clang++"
 SYSROOT="$TOOLCHAIN/sysroot"
 
-BUILD_DIR="$ROOT/build_android"
-KEYSTORE="$BUILD_DIR/magicpick.keystore"
+BUILD_DIR="$ROOT/build/android"
+# Deliberately NOT inside BUILD_DIR, which gets wiped every run below --
+# otherwise every build would silently generate a new signing key, and
+# reinstalling over a previous build would fail with a signature mismatch.
+KEYSTORE="$ROOT/build/android-keystore.jks"
 
 rm -rf "$BUILD_DIR"
 mkdir -p "$BUILD_DIR/lib/$ABI" "$BUILD_DIR/res/values" "$BUILD_DIR/assets" "$BUILD_DIR/bin" "$BUILD_DIR/obj"

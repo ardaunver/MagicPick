@@ -31,17 +31,22 @@ assets/
   enemies/           enemy sprites
   cave.png           background
 vendor/              iOS/Android raylib checkouts (fetched locally, not tracked in git)
+build/               all build output, gitignored -- build/macos, build/ios,
+                     build/android, build/windows per platform
 ```
 
 ## Building
+
+All build output lives under `build/<platform>/`, gitignored in its
+entirety -- nothing there needs to survive a fresh clone.
 
 ### macOS
 
 Requires [raylib](https://www.raylib.com/) via Homebrew (`brew install raylib`).
 
 ```
-cmake -B build -S .
-cmake --build build
+cmake -B build/macos -S .
+cmake --build build/macos
 ```
 
 Produces a statically-linked `MagicPick` binary with no Homebrew runtime
@@ -50,7 +55,7 @@ dependency, portable to any Mac.
 ### Windows
 
 Cross-compiled from macOS using `mingw-w64` and raylib's official Windows
-binaries (matched to raylib 5.5).
+binaries (matched to raylib 5.5), building into `build/windows`.
 
 ### iOS
 
@@ -67,10 +72,10 @@ prebuilt package. First fetch the fork and apply this project's fixes to it
 Then generate and build via CMake's Xcode generator:
 
 ```
-cmake -S . -B build_ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator
+cmake -S . -B build/ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator
 ```
 
-Open `build_ios/guitarist_sorcerer.xcodeproj` in Xcode, select the
+Open `build/ios/guitarist_sorcerer.xcodeproj` in Xcode, select the
 **guitarist_sorcerer** scheme (not `ALL_BUILD`) with an iPhone Simulator
 destination, and run. On first launch of a fresh Simulator, rotate the
 device to landscape (Device menu → Rotate Left/Right, or Cmd+Left/Right) —
@@ -84,32 +89,37 @@ vendored fork's audio backend doesn't compile for iOS yet).
 
 ### Android
 
-Requires the Android SDK command-line tools, an NDK, and a JDK 17+ (e.g.
-`brew install --cask android-commandlinetools` and `brew install openjdk@17`,
-then `sdkmanager --sdk_root=<path> "platform-tools" "platforms;android-34"
-"build-tools;34.0.0" "ndk;26.3.11579264" "emulator"
-"system-images;android-34;google_apis;arm64-v8a"`).
+Requires the Android SDK command-line tools, an NDK, and a JDK 17+:
+
+```
+brew install --cask android-commandlinetools
+brew install openjdk@17
+sdkmanager --sdk_root=/opt/homebrew/share/android-commandlinetools \
+    "platform-tools" "platforms;android-34" "build-tools;34.0.0" \
+    "ndk;26.3.11579264" "emulator" "system-images;android-34;google_apis;arm64-v8a"
+```
 
 Unlike every other platform here, raylib has no CMake support for Android at
 all -- Android builds are Makefile-only upstream. So this target skips CMake
 entirely: fetch raylib's source, build it into a static library with its own
 Makefile, then compile this game's sources directly against it with the
 NDK's own clang and package the result by hand (no Gradle, no Android
-Studio project) via `android/build_apk.sh`.
+Studio project).
 
 ```
-./android/setup_raylib.sh   # fetches raylib 5.5 into vendor/raylib-android
-export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
-export JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home
-./android/build_apk.sh      # -> build_android/MagicPick.apk
+./android/run.sh
 ```
 
-Install and launch on a running emulator or connected device:
+Handles everything end to end: fetches raylib into `vendor/raylib-android`
+and creates the `MagicPickAVD` emulator on first run, boots the emulator if
+one isn't already running, builds `build/android/MagicPick.apk`, installs
+it, launches it, and streams the game's log output. Re-run any time after a
+code change. `ANDROID_HOME`/`JAVA_HOME` default to the Homebrew paths above;
+override them as environment variables if yours differ.
 
-```
-adb install build_android/MagicPick.apk
-adb shell am start -n com.ardaunver.magicpick/.MainActivity
-```
+To build/install/launch as separate steps instead (e.g. against a real
+device or a different emulator), see `android/build_apk.sh` -- `run.sh` is
+a thin wrapper around it plus the emulator/adb bookkeeping.
 
 The one bit of Java in this project (`android/MainActivity.java`, a thin
 `NativeActivity` subclass) exists only to request immersive/edge-to-edge

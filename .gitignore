@@ -1,7 +1,4 @@
 build/
-build_windows/
-build_ios/
-build_android/
 dist/
 .DS_Store
 .claude/settings.local.json
