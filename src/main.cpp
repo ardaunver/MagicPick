@@ -432,7 +432,7 @@ int main() {
     // bug entirely. Revisit if/when the fork's render-texture support is fixed.
     Camera2D camera = {0};
     camera.zoom = (float)SCALE;
-    TouchControls touchControls = TouchControlsCreate((float)VIRTUAL_WIDTH, (float)VIRTUAL_HEIGHT);
+    TouchControlsInit((float)VIRTUAL_WIDTH, (float)VIRTUAL_HEIGHT);
 #else
     RenderTexture2D canvas = LoadRenderTexture(VIRTUAL_WIDTH, VIRTUAL_HEIGHT);
     Rectangle canvasSrc = {0, 0, (float)VIRTUAL_WIDTH, -(float)VIRTUAL_HEIGHT};
@@ -640,7 +640,19 @@ int main() {
         float dt = GetFrameTime();
 
 #if defined(PLATFORM_IOS)
-        TouchControlsUpdate(touchControls, dt, (float)SCALE);
+        // Fit the 320x180 virtual canvas to whatever the real screen size
+        // turns out to be (device/orientation dependent, and this fork's
+        // reported size has been inconsistent) rather than assuming a fixed
+        // window size like desktop can. Letterboxes on one axis if the
+        // screen's aspect ratio isn't exactly 16:9.
+        float screenW = (float)GetScreenWidth();
+        float screenH = (float)GetScreenHeight();
+        camera.zoom = fminf(screenW / VIRTUAL_WIDTH, screenH / VIRTUAL_HEIGHT);
+        camera.offset = {
+            (screenW - VIRTUAL_WIDTH * camera.zoom) / 2.0f,
+            (screenH - VIRTUAL_HEIGHT * camera.zoom) / 2.0f
+        };
+        TouchControlsUpdate(dt, camera);
 #endif
 
         float tuneValue = 100.0f * expf(-TUNE_DECAY_RATE * tuneTimer);
@@ -972,6 +984,25 @@ int main() {
 
                 applyCast(ChordBurstAddNote(chordBurst, note));
             }
+
+#if defined(PLATFORM_IOS)
+            Note touchNotes[CHORD_WHEEL_GATE_COUNT];
+            int touchNoteCount = TouchControlsNotesPressed(touchNotes, CHORD_WHEEL_GATE_COUNT);
+            for (int n = 0; n < touchNoteCount; n++) {
+                Note note = touchNotes[n];
+                printf("Note: %s\n", NoteToString(note));
+
+                for (int i = 0; i < NOTE_KEY_COUNT; i++) {
+                    if (bindings[i].note == note) {
+                        PlaySound(noteSounds[i]);
+                        break;
+                    }
+                }
+
+                applyCast(ChordBurstAddNote(chordBurst, note));
+            }
+#endif
+
             applyCast(ChordBurstUpdate(chordBurst));
 
             if (lightActive) {
@@ -1529,7 +1560,7 @@ int main() {
             }
 #if defined(PLATFORM_IOS)
         if (!showTitleScreen) {
-            TouchControlsDraw(touchControls);
+            TouchControlsDraw();
         }
         EndMode2D();
         EndDrawing();

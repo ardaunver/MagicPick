@@ -1,6 +1,10 @@
 #include "player.h"
 #include <cmath>
 
+#if defined(PLATFORM_IOS)
+#include "touch_controls.h"
+#endif
+
 static const float MOVE_SPEED = 80.0f;   // px/sec, virtual canvas units
 static const float GRAVITY = 400.0f;     // px/sec^2
 static const float JUMP_VELOCITY = -160.0f;
@@ -110,12 +114,19 @@ void PlayerUpdate(Player &player, float dt, float groundY, float screenWidth) {
         player.velocity.x = 0;
         if (IsKeyDown(KEY_LEFT))  player.velocity.x -= moveSpeed;
         if (IsKeyDown(KEY_RIGHT)) player.velocity.x += moveSpeed;
+#if defined(PLATFORM_IOS)
+        player.velocity.x += TouchControlsMoveDirection().x * moveSpeed;
+#endif
 
         if (player.velocity.x < 0) player.facingRight = false;
         if (player.velocity.x > 0) player.facingRight = true;
     }
 
-    if (IsKeyPressed(KEY_UP) && !player.isSlamming && player.beerSlowTimer <= 0.0f && player.jumpCount < MAX_JUMPS) {
+    bool jumpPressed = IsKeyPressed(KEY_UP);
+#if defined(PLATFORM_IOS)
+    jumpPressed = jumpPressed || TouchControlsJumpPressed();
+#endif
+    if (jumpPressed && !player.isSlamming && player.beerSlowTimer <= 0.0f && player.jumpCount < MAX_JUMPS) {
         player.velocity.y = JUMP_VELOCITY;
         player.onGround = false;
         player.justJumped = true;
@@ -136,7 +147,11 @@ void PlayerUpdate(Player &player, float dt, float groundY, float screenWidth) {
     if (IsKeyPressed(KEY_ONE)) player.stance = Stance::MAJOR;
     if (IsKeyPressed(KEY_TWO)) player.stance = Stance::MINOR;
 
-    if (IsKeyPressed(KEY_SPACE) && !player.isAttacking && !player.isSlamming) {
+    bool attackPressed = IsKeyPressed(KEY_SPACE);
+#if defined(PLATFORM_IOS)
+    attackPressed = attackPressed || TouchControlsAttackPressed();
+#endif
+    if (attackPressed && !player.isAttacking && !player.isSlamming) {
         if (player.onGround) {
             player.isAttacking = true;
             player.attackTimer = ATTACK_DURATION;

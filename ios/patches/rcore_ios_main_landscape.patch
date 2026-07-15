@@ -1,0 +1,62 @@
+--- a/src/platforms/rcore_ios_main.m	2026-07-15 14:14:20
++++ b/src/platforms/rcore_ios_main.m	2026-07-15 14:11:09
+@@ -224,7 +224,16 @@
+ }
+ 
+ - (void)loadView {
+-  self.view = [[RaylibGLView alloc] initWithFrame:[UIScreen mainScreen].bounds];
++  // [UIScreen mainScreen].bounds never rotates with interface orientation on
++  // modern iOS (it always reports the device's native portrait size), and
++  // this fork has no viewDidLayoutSubviews hook to redo the GL renderbuffer
++  // after rotation anyway -- so for a landscape-locked app like this one,
++  // just construct the frame as landscape-shaped from the start rather than
++  // depending on rotation being detected at all.
++  CGRect screenBounds = [UIScreen mainScreen].bounds;
++  CGFloat w = MAX(screenBounds.size.width, screenBounds.size.height);
++  CGFloat h = MIN(screenBounds.size.width, screenBounds.size.height);
++  self.view = [[RaylibGLView alloc] initWithFrame:CGRectMake(0, 0, w, h)];
+   self.view.multipleTouchEnabled = YES;
+ }
+ 
+@@ -492,9 +501,13 @@
+ 
+   __block bool ok = false;
+   dispatch_sync(dispatch_get_main_queue(), ^{
++    CGRect screenBounds = [UIScreen mainScreen].bounds;
++    CGFloat landscapeW = MAX(screenBounds.size.width, screenBounds.size.height);
++    CGFloat landscapeH = MIN(screenBounds.size.width, screenBounds.size.height);
++    CGRect landscapeFrame = CGRectMake(0, 0, landscapeW, landscapeH);
++
+     if (ios.window == nil) {
+-      ios.window =
+-          [[UIWindow alloc] initWithFrame:[UIScreen mainScreen].bounds];
++      ios.window = [[UIWindow alloc] initWithFrame:landscapeFrame];
+     }
+ 
+     if (ios.viewController == nil) {
+@@ -504,12 +517,23 @@
+     ios.window.rootViewController = ios.viewController;
+     [ios.window makeKeyAndVisible];
+ 
++    // makeKeyAndVisible can have UIKit resize the root view back to the
++    // window's/screen's native (portrait) bounds as part of its own layout
++    // pass, undoing the landscape frame loadView set. Re-assert both frames
++    // right before the GL renderbuffer is actually created from them, since
++    // that's the last moment they can be corrected.
++    ios.window.frame = landscapeFrame;
++    ios.viewController.view.frame = landscapeFrame;
++
+     ok = ios_setup_gl();
+ 
++    // Matches the landscape-shaped frame loadView constructs -- see the
++    // comment there. Reports (max, min) instead of raw (width, height) since
++    // UIScreen.bounds itself never reflects the app's actual orientation.
+     UIScreen *screen = [UIScreen mainScreen];
+     CGSize boundsSize = screen.bounds.size;
+-    ios.screenWidth = (int)boundsSize.width;
+-    ios.screenHeight = (int)boundsSize.height;
++    ios.screenWidth = (int)MAX(boundsSize.width, boundsSize.height);
++    ios.screenHeight = (int)MIN(boundsSize.width, boundsSize.height);
+     ios.scaleX = (float)screen.nativeScale;
+     ios.scaleY = (float)screen.nativeScale;
+ 

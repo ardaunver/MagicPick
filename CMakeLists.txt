@@ -37,6 +37,11 @@ if(IS_IOS)
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.ardaunver.magicpick"
         MACOSX_BUNDLE_BUNDLE_VERSION "1.0"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0"
+        # Custom Info.plist: the default one CMake generates has no way to
+        # lock orientation. This game is landscape-only, matching its 16:9
+        # virtual canvas -- without this the device defaults to portrait and
+        # squeezes the game into a thin strip in the middle of the screen.
+        MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/ios/Info.plist.in"
         XCODE_ATTRIBUTE_TARGETED_DEVICE_FAMILY "1"
         XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.ardaunver.magicpick"
         # This machine's macOS/Xcode combo tags every file (even ones Xcode

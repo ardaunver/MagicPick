@@ -56,19 +56,31 @@ binaries (matched to raylib 5.5).
 Experimental. No official raylib release supports iOS yet, so the build
 compiles raylib from source against an unofficial community fork
 (`vsaint1/raylib`, branch `features/ios-platform`) rather than linking a
-prebuilt package. Generate and build via CMake's Xcode generator:
+prebuilt package. First fetch the fork and apply this project's fixes to it
+(see `ios/patches/`):
+
+```
+./ios/setup_vendor.sh
+```
+
+Then generate and build via CMake's Xcode generator:
 
 ```
 cmake -S . -B build_ios -G Xcode -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_SYSROOT=iphonesimulator
 ```
 
-then open `build_ios/guitarist_sorcerer.xcodeproj` in Xcode and run on a
-Simulator destination.
+Open `build_ios/guitarist_sorcerer.xcodeproj` in Xcode, select the
+**guitarist_sorcerer** scheme (not `ALL_BUILD`) with an iPhone Simulator
+destination, and run. On first launch of a fresh Simulator, rotate the
+device to landscape (Device menu → Rotate Left/Right, or Cmd+Left/Right) —
+the app is landscape-locked, but the Simulator's own device orientation is
+a separate setting that starts in portrait regardless.
 
-**Current status:** builds and renders correctly (boots to the title
-screen) on the iOS Simulator. Not yet playable past that — touch controls
-aren't wired up, and audio is disabled (the vendored fork's audio backend
-doesn't compile for iOS yet).
+**Current status:** builds and renders correctly on the iOS Simulator.
+Touch controls (movement joystick, jump/attack buttons, chord wheel) exist
+and respond to touch, but aren't yet wired to player movement, combat, or
+spellcasting. Audio is disabled (the vendored fork's audio backend doesn't
+compile for iOS yet).
 
 ## Distribution
 
